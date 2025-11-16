@@ -1,0 +1,165 @@
+#include <Servo.h>
+
+Servo servo1;     // Slow rotation servo
+Servo servo2;     // Radar sweep servo
+Servo servo3;     // Gun servo
+
+const int servo1Pin = 10;
+const int servo2Pin = 7;
+const int servo3Pin = 11;
+
+const int trigPin = 12;
+const int echoPin = 13;
+
+const int fireLightPin = 9;
+const int detectLightPin = 8;
+
+int radarAngle = 0;
+int stepSize = 2;
+int delaySpeed = 20;
+
+bool stopRadar = false;
+bool gunReady = false;     // <--- NEW: radar will remain stop until user sends "move"
+
+void setup() {
+  Serial.begin(9600);
+
+  servo1.attach(servo1Pin);
+  servo2.attach(servo2Pin);
+  servo3.attach(servo3Pin);
+
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
+  pinMode(fireLightPin, OUTPUT);
+  pinMode(detectLightPin, OUTPUT);
+
+  servo1.write(90);
+  delay(350);
+}
+
+int getDistance() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(3);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(12);
+  digitalWrite(trigPin, LOW);
+
+  long duration = pulseIn(echoPin, HIGH, 30000);
+  if (duration <= 0) return 999;
+
+  return duration * 0.034 / 2;
+}
+
+void loop() {
+  readSerialCommands();
+
+  // Radar only moves if gunReady is false
+  if (!stopRadar && !gunReady) {
+    for (radarAngle = 0; radarAngle <= 180 && !stopRadar && !gunReady; radarAngle += stepSize) {
+      radarStep();
+    }
+
+    for (radarAngle = 180; radarAngle >= 0 && !stopRadar && !gunReady; radarAngle -= stepSize) {
+      radarStep();
+    }
+  }
+}
+
+void radarStep() {
+  readSerialCommands();
+
+  servo2.write(radarAngle);
+  delay(delaySpeed);
+
+  if (checkDetection(radarAngle)) {
+    stopRadar = true;
+    gunReady = true;       // radar stops until user gives command
+    handleDetection(radarAngle);
+  }
+}
+
+void readSerialCommands() {
+  if (Serial.available()) {
+    char cmd = Serial.read();
+
+    if (cmd == 'f') blinkFireLight();
+    if (cmd == 'l') blinkDetectLight();
+
+    // -------- GUN COMMAND (USER CONTROLLED) --------
+    if (cmd == 'g' && gunReady) {
+
+      // Move gun to detected angle (same as radar angle)
+      servo3.write(servo2.read());
+      delay(500);
+
+      // Fire
+      digitalWrite(fireLightPin, HIGH);
+      delay(300);
+      digitalWrite(fireLightPin, LOW);
+
+      // After firing, allow radar to move again
+      gunReady = false;
+      stopRadar = false;
+      delay(300);
+    }
+
+    // -------- USER SAYS MOVE → RESUME RADAR --------
+    if (cmd == 'm') {  
+      gunReady = false;
+      stopRadar = false;
+    }
+  }
+}
+
+// ---------------- DETECTION HANDLING ----------------
+void handleDetection(int angle) {
+
+  while (true) {
+    readSerialCommands();  // allow commands inside loop
+
+    int pos1 = servo1.read();
+
+    digitalWrite(detectLightPin, HIGH);
+    delay(50);
+    digitalWrite(detectLightPin, LOW);
+    delay(50);
+
+    if (pos1 < angle) pos1++;
+    else if (pos1 > angle) pos1--;
+    servo1.write(pos1);
+
+    if (pos1 == angle) break;
+  }
+}
+
+// ---------------- DISTANCE CHECK ----------------
+bool checkDetection(int angle) {
+  int d = getDistance();
+
+  Serial.print("Angle: ");
+  Serial.print(angle);
+  Serial.print(" | Distance: ");
+  Serial.println(d);
+
+  return (d < 10);
+}
+
+// ---------------- LIGHT FUNCTIONS ----------------
+void blinkFireLight() {
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(fireLightPin, HIGH);
+    delay(200);
+    digitalWrite(fireLightPin, LOW);
+    delay(200);
+  }
+}
+
+void blinkDetectLight() {
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(detectLightPin, HIGH);
+    delay(200);
+    digitalWrite(detectLightPin, LOW);
+    delay(200);
+  }
+}
